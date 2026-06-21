@@ -730,49 +730,51 @@ class Player extends Human implements CommandSender, ChunkListener, IPlayer, Nev
 	/**
 	 * {@inheritdoc}
 	 *
-	 * If null is given, broadcasts to all online players and also:
-	 * - Updates the PlayerList entry for all viewers (so AddPlayerPacket uses the new skin on world join)
-	 * - Suppresses the Bedrock client's skin-echo feedback to prevent server-side revert
+	 * If null is given, broadcasts to all online players:
+	 * - Respawns the entity for same-world viewers (guaranteed skin update — PlayerSkinPacket alone
+	 *   is unreliable in newer Bedrock clients for server-initiated changes)
+	 * - Updates the PlayerList entry for everyone (so AddPlayerPacket on world join uses new skin)
+	 * - Suppresses the Bedrock client skin-echo feedback loop
 	 */
 	public function sendSkin(?array $targets = null) : void{
 		$skinData = $this->getNetworkSession()->getTypeConverter()->getSkinAdapter()->toSkinData($this->skin);
-		$skinPacket = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
 
 		if($targets === null){
-			// Suppress the Bedrock client feedback echo (client sends back its old skin when it receives
-			// a PlayerSkinPacket for its own UUID with a different skin, causing the server to revert it).
+			// Suppress the client skin-echo: Bedrock sends back its old skin when it receives a
+			// PlayerSkinPacket for its own UUID, which would cause the server to revert the change.
 			$this->getNetworkSession()->markServerInitiatedSkin();
 
-			// Update PlayerList cache for all other players so AddPlayerPacket (on world join) reads new skin.
+			// Update PlayerList cache for ALL other players.
+			// sendSpawnPacket() sends PlayerListPacket::add before AddPlayerPacket, so viewers who
+			// haven't spawned this entity yet will automatically see the new skin on world join.
 			$listPacket = PlayerListPacket::add([PlayerListEntry::createAdditionEntry(
 				$this->getUniqueId(), $this->getId(), $this->getDisplayName(), $skinData, $this->getXuid()
 			)]);
 			$others = [];
-			$notSpawned = [];
 			foreach($this->server->getOnlinePlayers() as $p){
-				if($p === $this) continue;
-				$others[] = $p;
-				if(!isset($this->hasSpawned[spl_object_id($p)])){
-					$notSpawned[] = $p;
-				}
+				if($p !== $this) $others[] = $p;
 			}
 			if(count($others) > 0){
 				NetworkBroadcastUtils::broadcastPackets($others, [$listPacket]);
 			}
-			if(count($this->hasSpawned) > 0){
-				NetworkBroadcastUtils::broadcastPackets(array_values($this->hasSpawned), [$skinPacket]);
+
+			// Respawn for same-world viewers: despawn then spawnTo triggers sendSpawnPacket()
+			// which sends PlayerListPacket::add (with new skin) then AddPlayerPacket.
+			// This is the most reliable way to force the new skin in newer Bedrock clients.
+			$spawned = array_values($this->hasSpawned);
+			foreach($spawned as $p){
+				$this->despawnFrom($p);
+				$this->spawnTo($p);
 			}
-			if(count($notSpawned) > 0){
-				NetworkBroadcastUtils::broadcastPackets($notSpawned, [$skinPacket]);
-			}
-			// Send to self so the client updates its own display (feedback is suppressed above).
-			$this->getNetworkSession()->sendDataPacket($skinPacket);
+
+			// Also send PlayerSkinPacket to self so the client can update its own display.
+			$this->getNetworkSession()->sendDataPacket(PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData));
 		} else {
-			// Explicit target list (e.g. [$this] for cancelled skin revert, or specific recipients).
+			// Explicit target list (e.g. [$this] for cancelled skin revert).
 			if(in_array($this, $targets, true)){
 				$this->getNetworkSession()->markServerInitiatedSkin();
 			}
-			NetworkBroadcastUtils::broadcastPackets($targets, [$skinPacket]);
+			NetworkBroadcastUtils::broadcastPackets($targets, [PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData)]);
 		}
 	}
 

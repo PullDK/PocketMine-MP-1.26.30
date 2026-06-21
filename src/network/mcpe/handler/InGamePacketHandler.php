@@ -149,6 +149,11 @@ class InGamePacketHandler extends PacketHandler{
 	public bool $forceMoveSync = false;
 
 	protected ?string $lastRequestedFullSkinId = null;
+	private bool $ignoreNextInboundSkin = false;
+
+	public function markServerInitiatedSkin() : void{
+		$this->ignoreNextInboundSkin = true;
+	}
 
 	public function __construct(
 		private Player $player,
@@ -827,6 +832,13 @@ class InGamePacketHandler extends PacketHandler{
 	}
 
 	public function handlePlayerSkin(PlayerSkinPacket $packet) : bool{
+		if($this->ignoreNextInboundSkin){
+			// Server sent a skin to this client (server-initiated change); the client is echoing back its own skin.
+			// Drop it to prevent it from reverting the server-side skin change.
+			$this->ignoreNextInboundSkin = false;
+			$this->session->getLogger()->debug("Dropped client skin echo after server-initiated skin change");
+			return true;
+		}
 		if($packet->skin->getFullSkinId() === $this->lastRequestedFullSkinId){
 			//TODO: HACK! In 1.19.60, the client sends its skin back to us if we sent it a skin different from the one
 			//it's using. We need to prevent this from causing a feedback loop.

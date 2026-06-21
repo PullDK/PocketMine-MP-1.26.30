@@ -110,10 +110,14 @@ use pocketmine\lang\Translatable;
 use pocketmine\math\Vector3;
 use pocketmine\nbt\tag\CompoundTag;
 use pocketmine\nbt\tag\IntTag;
+use pocketmine\network\mcpe\NetworkBroadcastUtils;
 use pocketmine\network\mcpe\NetworkSession;
 use pocketmine\network\mcpe\protocol\AnimatePacket;
 use pocketmine\network\mcpe\protocol\MovePlayerPacket;
+use pocketmine\network\mcpe\protocol\PlayerListPacket;
+use pocketmine\network\mcpe\protocol\PlayerSkinPacket;
 use pocketmine\network\mcpe\protocol\SetActorMotionPacket;
+use pocketmine\network\mcpe\protocol\types\PlayerListEntry;
 use pocketmine\network\mcpe\protocol\types\BlockPosition;
 use pocketmine\network\mcpe\protocol\types\DimensionIds;
 use pocketmine\network\mcpe\protocol\types\entity\EntityMetadataCollection;
@@ -726,10 +730,50 @@ class Player extends Human implements CommandSender, ChunkListener, IPlayer, Nev
 	/**
 	 * {@inheritdoc}
 	 *
-	 * If null is given, will additionally send the skin to the player itself as well as its viewers.
+	 * If null is given, broadcasts to all online players and also:
+	 * - Updates the PlayerList entry for all viewers (so AddPlayerPacket uses the new skin on world join)
+	 * - Suppresses the Bedrock client's skin-echo feedback to prevent server-side revert
 	 */
 	public function sendSkin(?array $targets = null) : void{
-		parent::sendSkin($targets ?? $this->server->getOnlinePlayers());
+		$skinData = $this->getNetworkSession()->getTypeConverter()->getSkinAdapter()->toSkinData($this->skin);
+		$skinPacket = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
+
+		if($targets === null){
+			// Suppress the Bedrock client feedback echo (client sends back its old skin when it receives
+			// a PlayerSkinPacket for its own UUID with a different skin, causing the server to revert it).
+			$this->getNetworkSession()->markServerInitiatedSkin();
+
+			// Update PlayerList cache for all other players so AddPlayerPacket (on world join) reads new skin.
+			$listPacket = PlayerListPacket::add([PlayerListEntry::createAdditionEntry(
+				$this->getUniqueId(), $this->getId(), $this->getDisplayName(), $skinData, $this->getXuid()
+			)]);
+			$others = [];
+			$notSpawned = [];
+			foreach($this->server->getOnlinePlayers() as $p){
+				if($p === $this) continue;
+				$others[] = $p;
+				if(!isset($this->hasSpawned[spl_object_id($p)])){
+					$notSpawned[] = $p;
+				}
+			}
+			if(count($others) > 0){
+				NetworkBroadcastUtils::broadcastPackets($others, [$listPacket]);
+			}
+			if(count($this->hasSpawned) > 0){
+				NetworkBroadcastUtils::broadcastPackets(array_values($this->hasSpawned), [$skinPacket]);
+			}
+			if(count($notSpawned) > 0){
+				NetworkBroadcastUtils::broadcastPackets($notSpawned, [$skinPacket]);
+			}
+			// Send to self so the client updates its own display (feedback is suppressed above).
+			$this->getNetworkSession()->sendDataPacket($skinPacket);
+		} else {
+			// Explicit target list (e.g. [$this] for cancelled skin revert, or specific recipients).
+			if(in_array($this, $targets, true)){
+				$this->getNetworkSession()->markServerInitiatedSkin();
+			}
+			NetworkBroadcastUtils::broadcastPackets($targets, [$skinPacket]);
+		}
 	}
 
 	/**

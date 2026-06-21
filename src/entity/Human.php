@@ -166,31 +166,8 @@ class Human extends Living implements ProjectileSource, InventoryHolder{
 	 */
 	public function sendSkin(?array $targets = null) : void{
 		$skinData = TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->skin);
-		$skinPacket = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
-		$resolvedTargets = $targets ?? $this->hasSpawned;
-		NetworkBroadcastUtils::broadcastPackets($resolvedTargets, [$skinPacket]);
-
-		if($this instanceof Player && $targets === null){
-			$allOnline = $this->getWorld()->getServer()->getOnlinePlayers();
-			// PlayerListPacket::add with current skin updates the client-side PlayerList cache.
-			// Required so that AddPlayerPacket (sent on world join) reads the new skin, not the login skin.
-			$listPacket = PlayerListPacket::add([PlayerListEntry::createAdditionEntry($this->uuid, $this->id, $this->getDisplayName(), $skinData)]);
-			$others = [];
-			$notSpawned = [];
-			foreach($allOnline as $p){
-				if($p === $this) continue;
-				$others[] = $p;
-				if(!isset($this->hasSpawned[spl_object_id($p)])){
-					$notSpawned[] = $p;
-				}
-			}
-			if(count($others) > 0){
-				NetworkBroadcastUtils::broadcastPackets($others, [$listPacket]);
-			}
-			if(count($notSpawned) > 0){
-				NetworkBroadcastUtils::broadcastPackets($notSpawned, [$skinPacket]);
-			}
-		}
+		$packet = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
+		NetworkBroadcastUtils::broadcastPackets($targets ?? $this->hasSpawned, [$packet]);
 	}
 
 	public function jump() : void{

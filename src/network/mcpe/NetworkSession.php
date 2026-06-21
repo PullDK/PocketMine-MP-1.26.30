@@ -356,6 +356,11 @@ class NetworkSession{
 		$this->sentSkinIds[$skinId] = true;
 	}
 
+	public function markServerInitiatedSkin() : void{
+		if($this->handler instanceof InGamePacketHandler){
+			$this->handler->markServerInitiatedSkin();
+		}
+	}
 
 	/**
 	 * @internal Called by the network interface to update last recorded ping measurements.

@@ -166,24 +166,29 @@ class Human extends Living implements ProjectileSource, InventoryHolder{
 	 */
 	public function sendSkin(?array $targets = null) : void{
 		$skinData = TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->skin);
-		$packet = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
+		$skinPacket = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
 		$resolvedTargets = $targets ?? $this->hasSpawned;
-		NetworkBroadcastUtils::broadcastPackets($resolvedTargets, [$packet]);
+		NetworkBroadcastUtils::broadcastPackets($resolvedTargets, [$skinPacket]);
 
-		// Para jogadores: garante que todos os online (mesmo em outros mundos) recebem a skin atualizada.
-		// Necessário para skin persistir após troca de mundo.
 		if($this instanceof Player && $targets === null){
 			$allOnline = $this->getWorld()->getServer()->getOnlinePlayers();
-			$extra = [];
+			// PlayerListPacket::add with current skin updates the client-side PlayerList cache.
+			// Required so that AddPlayerPacket (sent on world join) reads the new skin, not the login skin.
+			$listPacket = PlayerListPacket::add([PlayerListEntry::createAdditionEntry($this->uuid, $this->id, $this->getDisplayName(), $skinData)]);
+			$others = [];
+			$notSpawned = [];
 			foreach($allOnline as $p){
-				if($p !== $this && !isset($this->hasSpawned[spl_object_id($p)])){
-					$extra[] = $p;
-					// Invalida cache da skin antiga nesta sessão
-					$p->getNetworkSession()->cacheSkinId($this->skin->getSkinId());
+				if($p === $this) continue;
+				$others[] = $p;
+				if(!isset($this->hasSpawned[spl_object_id($p)])){
+					$notSpawned[] = $p;
 				}
 			}
-			if(count($extra) > 0){
-				NetworkBroadcastUtils::broadcastPackets($extra, [$packet]);
+			if(count($others) > 0){
+				NetworkBroadcastUtils::broadcastPackets($others, [$listPacket]);
+			}
+			if(count($notSpawned) > 0){
+				NetworkBroadcastUtils::broadcastPackets($notSpawned, [$skinPacket]);
 			}
 		}
 	}
@@ -520,8 +525,9 @@ class Human extends Living implements ProjectileSource, InventoryHolder{
 				$networkSession->cacheSkinId($this->skin->getSkinId());
 			}
 		}else{
-			// Player: garante que o visualizador tem a skin atual (resolve perda de skin na troca de mundo)
-			$networkSession->sendDataPacket(PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData));
+			// Refresh the PlayerList entry with the current skin before AddPlayerPacket,
+			// so the client reads the correct skin when spawning the entity.
+			$networkSession->sendDataPacket(PlayerListPacket::add([PlayerListEntry::createAdditionEntry($this->uuid, $this->id, $this->getName(), $skinData)]));
 		}
 
 		$networkSession->sendDataPacket(AddPlayerPacket::create(

@@ -165,9 +165,27 @@ class Human extends Living implements ProjectileSource, InventoryHolder{
 	 * @param Player[]|null $targets
 	 */
 	public function sendSkin(?array $targets = null) : void{
-		NetworkBroadcastUtils::broadcastPackets($targets ?? $this->hasSpawned, [
-			PlayerSkinPacket::create($this->getUniqueId(), "", "", TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->skin))
-		]);
+		$skinData = TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->skin);
+		$packet = PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData);
+		$resolvedTargets = $targets ?? $this->hasSpawned;
+		NetworkBroadcastUtils::broadcastPackets($resolvedTargets, [$packet]);
+
+		// Para jogadores: garante que todos os online (mesmo em outros mundos) recebem a skin atualizada.
+		// Necessário para skin persistir após troca de mundo.
+		if($this instanceof Player && $targets === null){
+			$allOnline = $this->getWorld()->getServer()->getOnlinePlayers();
+			$extra = [];
+			foreach($allOnline as $p){
+				if($p !== $this && !isset($this->hasSpawned[spl_object_id($p)])){
+					$extra[] = $p;
+					// Invalida cache da skin antiga nesta sessão
+					$p->getNetworkSession()->cacheSkinId($this->skin->getSkinId());
+				}
+			}
+			if(count($extra) > 0){
+				NetworkBroadcastUtils::broadcastPackets($extra, [$packet]);
+			}
+		}
 	}
 
 	public function jump() : void{
@@ -495,8 +513,15 @@ class Human extends Living implements ProjectileSource, InventoryHolder{
 	protected function sendSpawnPacket(Player $player) : void{
 		$networkSession = $player->getNetworkSession();
 		$typeConverter = $networkSession->getTypeConverter();
+		$skinData = $typeConverter->getSkinAdapter()->toSkinData($this->skin);
 		if(!($this instanceof Player)){
-			$networkSession->sendDataPacket(PlayerListPacket::add([PlayerListEntry::createAdditionEntry($this->uuid, $this->id, $this->getName(), $typeConverter->getSkinAdapter()->toSkinData($this->skin))]));
+			if(!$networkSession->hasSkinCached($this->skin->getSkinId())){
+				$networkSession->sendDataPacket(PlayerListPacket::add([PlayerListEntry::createAdditionEntry($this->uuid, $this->id, $this->getName(), $skinData)]));
+				$networkSession->cacheSkinId($this->skin->getSkinId());
+			}
+		}else{
+			// Player: garante que o visualizador tem a skin atual (resolve perda de skin na troca de mundo)
+			$networkSession->sendDataPacket(PlayerSkinPacket::create($this->getUniqueId(), "", "", $skinData));
 		}
 
 		$networkSession->sendDataPacket(AddPlayerPacket::create(

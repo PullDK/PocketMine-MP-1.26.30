@@ -172,6 +172,8 @@ class NetworkSession{
 	private bool $loggedIn = false;
 	private bool $authenticated = false;
 	private int $connectTime;
+	/** @var array<string, true> Skin IDs já enviados para esta sessão (evita re-envio desnecessário) */
+	private array $sentSkinIds = [];
 	private ?CompoundTag $cachedOfflinePlayerData = null;
 
 	private ?EncryptionContext $cipher = null;
@@ -344,6 +346,14 @@ class NetworkSession{
 	 */
 	public function getPing() : ?int{
 		return $this->ping;
+	}
+
+	public function hasSkinCached(string $skinId) : bool{
+		return isset($this->sentSkinIds[$skinId]);
+	}
+
+	public function cacheSkinId(string $skinId) : void{
+		$this->sentSkinIds[$skinId] = true;
 	}
 
 

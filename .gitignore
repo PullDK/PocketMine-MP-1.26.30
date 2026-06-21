@@ -1,0 +1,16 @@
+/vendor/
+/PocketMine-MP.phar
+/plugins/
+/worlds/
+/players/
+/logs/
+/crashdumps/
+/ops.txt
+/banned-players.txt
+/banned-ips.txt
+/whitelist.txt
+/pocketmine.yml
+/server.properties
+*.phar
+*.phar.bak-*
+.composer/
